@@ -23,6 +23,7 @@ class Product(Base):
     availability = Column(Boolean, default=True)
     check_interval = Column(Integer, default=60) # In minutes
     email_enabled = Column(Boolean, default=True)
+    target_price_notified = Column(Boolean, default=False)
     browser_enabled = Column(Boolean, default=False)
     last_checked_at = Column(DateTime(timezone=True), nullable=True)
     is_active = Column(Boolean, default=True) # Used for pausing tracking

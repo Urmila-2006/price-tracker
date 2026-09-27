@@ -1,6 +1,7 @@
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.header import Header
 from ..config import settings
 
 def send_email(to_email: str, subject: str, body: str, html_body: str = None):
@@ -17,7 +18,7 @@ def send_email(to_email: str, subject: str, body: str, html_body: str = None):
     msg = MIMEMultipart('alternative')
     msg['From'] = settings.SMTP_FROM_EMAIL
     msg['To'] = to_email
-    msg['Subject'] = subject
+    msg['Subject'] = Header(subject, 'utf-8')
 
     msg.attach(MIMEText(body, 'plain'))
     if html_body:
@@ -71,7 +72,7 @@ PriceTracker
 """
     send_email(to_email, f"Price Drop Alert: {product_name}", body)
 
-def send_target_price_email(to_email: str, product_name: str, target_price: float, old_price: float, current_price: float, currency: str, product_url: str, check_time: str):
+def send_target_price_email(to_email: str, product_name: str, target_price: float, old_price: float, current_price: float, currency: str, product_url: str, check_time: str, image_url: str = None):
     currency_symbol = "₹" if currency == "INR" else ("$" if currency == "USD" else currency + " ")
     
     prev_price_str = f"{currency_symbol}{old_price:,.2f}" if old_price is not None else "N/A"
@@ -90,11 +91,14 @@ Link to the product/details page:
 {product_url}
 """
     
+    image_html = f'<div style="text-align: center; margin-bottom: 20px;"><img src="{image_url}" alt="{product_name}" style="max-width: 100%; height: auto; max-height: 200px; border-radius: 8px;"></div>' if image_url else ''
+
     html_body = f"""
     <html>
       <head></head>
       <body style="font-family: Arial, sans-serif; color: #333; line-height: 1.6;">
         <div style="max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 8px;">
+          {image_html}
           <h2 style="color: #4f46e5;">PriceTracker Alert: Target Price Reached</h2>
           <p><strong>Product:</strong> {product_name}</p>
           <p><strong>Previous Price:</strong> {prev_price_str}</p>
@@ -112,7 +116,7 @@ Link to the product/details page:
     """
 
     try:
-        send_email(to_email, f"PriceTracker Alert: Target Price Reached", body, html_body)
+        send_email(to_email, f"🎉 Target Price Reached – {product_name}", body, html_body)
     except Exception as e:
         raise e
 

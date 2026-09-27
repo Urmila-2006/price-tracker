@@ -1,4 +1,4 @@
-from celery import shared_task
+# Celery has been removed for Vercel compatibility
 from sqlalchemy.orm import Session
 from datetime import datetime, timezone, timedelta
 from ..database import SessionLocal
@@ -9,9 +9,9 @@ from ..models.user import User
 from ..scrapers import get_scraper, ScraperException
 from ..services.email_service import send_price_drop_email, send_target_price_email
 
-@shared_task
 def schedule_price_checks():
     db = SessionLocal()
+    stats = {"checked": 0, "price_updates": 0, "target_reached": 0, "emails_sent": 0}
     try:
         now = datetime.now(timezone.utc)
         
@@ -37,16 +37,22 @@ def schedule_price_checks():
                 due_products.append(product)
                 
         if due_products:
+            stats["checked"] = len(due_products)
             print(f"[PRICE CHECK] Found {len(due_products)} products due for update")
             for product in due_products:
                 print(f"[PRICE CHECK] Product={product.id} Old={product.currency} {product.current_price}")
-                check_product_price.delay(product.id)
+                res = check_product_price(product.id)
+                if res:
+                    if res.get("price_updated"): stats["price_updates"] += 1
+                    if res.get("target_reached"): stats["target_reached"] += 1
+                    if res.get("email_sent"): stats["emails_sent"] += 1
         else:
             print("[PRICE CHECK] No products currently due")
+            
+        return stats
     finally:
         db.close()
 
-@shared_task
 def check_product_price(product_id: int, is_manual: bool = False):
     db = SessionLocal()
     try:
@@ -59,7 +65,9 @@ def check_product_price(product_id: int, is_manual: bool = False):
             
         product = db.query(Product).filter(Product.id == product_id).first()
         if not product or not product.is_active:
-            return
+            return {}
+            
+        stats = {"price_updated": False, "target_reached": False, "email_sent": False}
             
         if is_manual:
             print(f"[CHECK PRICE] OLD PRICE = {product.current_price}")
@@ -77,13 +85,13 @@ def check_product_price(product_id: int, is_manual: bool = False):
                 data = scraper.get_product_data()
             except ScraperException as e:
                 print(f"Scraper error for {product.url}: {e.message}")
-                return
+                return {}
                 
             orig_price = data.get('price')
             
             if not orig_price:
                 print(f"Failed to extract price for {product.url}")
-                return
+                return {}
                 
             orig_currency = data.get('currency', 'USD')
             if orig_currency == 'USD':
@@ -122,6 +130,7 @@ def check_product_price(product_id: int, is_manual: bool = False):
         if price_changed:
             product.current_price = new_price
             product.currency = new_currency
+            stats["price_updated"] = True
             
             history = PriceHistory(
                 product_id=product.id,
@@ -130,6 +139,9 @@ def check_product_price(product_id: int, is_manual: bool = False):
                 availability=data.get('availability', True)
             )
             db.add(history)
+            
+            # Commit price and history updates before notifications
+            db.commit()
             
             if is_manual:
                 print("[CHECK PRICE] HISTORY CREATED")
@@ -175,13 +187,28 @@ def check_product_price(product_id: int, is_manual: bool = False):
 
             # 2. Target price
             if product.target_price and new_price <= product.target_price:
-                recent_target_notif = db.query(Notification).filter(
-                    Notification.product_id == product.id,
-                    Notification.type == "TARGET_PRICE_REACHED",
-                    Notification.new_price == new_price
-                ).order_by(Notification.sent_at.desc()).first()
+                # Atomically claim the right to send the notification
+                updated_rows = db.query(Product).filter(
+                    Product.id == product.id, 
+                    Product.target_price_notified == False
+                ).update({"target_price_notified": True}, synchronize_session=False)
+                db.commit() # Commit the claim
                 
-                if not recent_target_notif:
+                if updated_rows > 0:
+                    print(f"""
+TARGET PRICE CHECK
+Product: {product.name}
+Current price: {new_currency} {new_price}
+Target price: {new_currency} {product.target_price}
+Target reached: YES
+""")
+                    stats["target_reached"] = True
+                    recent_target_notif = db.query(Notification).filter(
+                        Notification.product_id == product.id,
+                        Notification.type == "TARGET_PRICE_REACHED"
+                    ).order_by(Notification.sent_at.desc()).first()
+                    
+                    # Create a new notification record if we haven't sent one for this drop
                     target_notif = Notification(
                         user_id=user.id,
                         product_id=product.id,
@@ -193,11 +220,6 @@ def check_product_price(product_id: int, is_manual: bool = False):
                     db.add(target_notif)
                     
                     if product.email_enabled:
-                        print("[PRICE ALERT] Target/price-drop condition reached")
-                        print(f"[PRICE ALERT] User ID: {user.id}")
-                        print(f"[PRICE ALERT] Product: {product.name}")
-                        print(f"[PRICE ALERT] Current price: {new_price}")
-                        print(f"[PRICE ALERT] Target price: {product.target_price}")
                         print("[PRICE ALERT] Sending email...")
                         
                         try:
@@ -210,13 +232,21 @@ def check_product_price(product_id: int, is_manual: bool = False):
                                 new_price, 
                                 new_currency, 
                                 product.url,
-                                check_time_str
+                                check_time_str,
+                                image_url=product.image_url
                             )
                             target_notif.email_status = "sent"
+                            stats["email_sent"] = True
                             print("[PRICE ALERT] Email sent successfully")
+                            print("Notification sent: YES")
                         except Exception as e:
                             print(f"[PRICE ALERT] Email failed: {e}")
                             target_notif.email_status = "failed"
+                            print("Notification sent: NO")
+                            
+                            # Revert the claim since email failed
+                            db.query(Product).filter(Product.id == product.id).update({"target_price_notified": False}, synchronize_session=False)
+                            db.commit()
         
         # Always update last_checked_at
         product.last_checked_at = datetime.now(timezone.utc)
@@ -233,6 +263,8 @@ def check_product_price(product_id: int, is_manual: bool = False):
             print("[CHECK PRICE] RESPONSE SENT")
         else:
             print(f"[PRICE CHECK] Product={product.id} New={new_currency} {new_price} NextCheck={product.next_check_at}")
+            
+        return stats
             
     except Exception as e:
         print(f"Error checking price for product {product_id}: {e}")

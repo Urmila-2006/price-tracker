@@ -143,6 +143,8 @@ def update_product(product_id: int, product_update: ProductUpdate, db: Session =
         raise HTTPException(status_code=404, detail="Product not found")
         
     if product_update.target_price is not None:
+        if db_product.target_price != product_update.target_price:
+            db_product.target_price_notified = False
         db_product.target_price = product_update.target_price
     if product_update.check_interval is not None:
         db_product.check_interval = product_update.check_interval
@@ -160,6 +162,8 @@ def update_alert_settings(product_id: int, settings_update: ProductAlertSettings
         raise HTTPException(status_code=404, detail="Product not found")
         
     if settings_update.target_price is not None:
+        if db_product.target_price != settings_update.target_price:
+            db_product.target_price_notified = False
         db_product.target_price = settings_update.target_price
     if settings_update.check_interval is not None:
         db_product.check_interval = settings_update.check_interval

@@ -20,6 +20,12 @@ def apply_migrations():
             print("Added browser_enabled to products")
         except Exception as e:
             print(f"Skipped browser_enabled: {e}")
+
+        try:
+            conn.execute(text("ALTER TABLE products ADD COLUMN target_price_notified BOOLEAN DEFAULT FALSE;"))
+            print("Added target_price_notified to products")
+        except Exception as e:
+            print(f"Skipped target_price_notified: {e}")
             
         try:
             # Convert existing check_interval from seconds to minutes, defaulting minimum to 15 mins (if some had 0)

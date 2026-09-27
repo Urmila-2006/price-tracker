@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .database import engine, Base
 from . import models
-from .routers import auth, products, alerts, dashboard, catalog
+from .routers import auth, products, alerts, dashboard, catalog, cron
 from .config import settings
 
 # Create database tables
@@ -44,6 +44,7 @@ app.include_router(products.router)
 app.include_router(dashboard.router)
 app.include_router(alerts.router)
 app.include_router(catalog.router)
+app.include_router(cron.router)
 
 @app.get("/")
 def read_root():
