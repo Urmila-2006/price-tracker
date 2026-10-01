@@ -74,8 +74,8 @@ def check_product_price(product_id: int, is_manual: bool = False):
             
         is_demo_mode = getattr(settings, 'DEMO_PRICE_SIMULATION', False)
         
-        # If it's dummyjson in demo mode, skip scraping entirely
-        if is_demo_mode and (product.source == 'dummyjson' or 'dummyjson' in product.url):
+        # In demo mode, skip scraping entirely for all products to simulate drops
+        if is_demo_mode:
             new_price = product.current_price
             new_currency = product.currency
             data = {'availability': True}

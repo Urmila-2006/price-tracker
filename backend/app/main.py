@@ -63,3 +63,13 @@ def test_email(request: TestEmailRequest):
         return {"success": True, "message": "Test email sent successfully"}
     except Exception as e:
         return {"success": False, "message": f"SMTP Error: {str(e)}"}
+
+@app.get("/api/debug-env")
+def debug_env():
+    import os
+    return {
+        "DATABASE_URL": os.environ.get("DATABASE_URL", "NOT_SET"),
+        "VERCEL_ENV": os.environ.get("VERCEL_ENV", "NOT_SET")
+    }
+
+# trigger reload

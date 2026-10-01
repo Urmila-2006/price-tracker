@@ -34,7 +34,7 @@ export default function DiscoverProducts() {
     setProducts([]);
     setSkip(0);
     setHasMore(true);
-    fetchProducts(0, true);
+    fetchProducts(true);
   }, [selectedCategory, searchQuery]);
 
   const fetchCategories = async () => {
@@ -46,30 +46,52 @@ export default function DiscoverProducts() {
     }
   };
 
-  const fetchProducts = async (currentSkip: number, reset: boolean = false) => {
+  const fetchProducts = async (reset: boolean = false) => {
     setLoading(true);
     try {
-      let endpoint = '/catalog/products';
-      let params: any = { skip: currentSkip, limit };
-
+      let endpoint = '/products/search';
+      let params: any = {};
+      
       if (searchQuery) {
-        endpoint = '/catalog/products';
         params.q = searchQuery;
       } else if (selectedCategory !== 'All') {
-        endpoint = `/catalog/category/${selectedCategory}`;
+        params.q = selectedCategory;
+      } else {
+        params.q = 'trending products';
       }
 
       const res = await api.get(endpoint, { params });
       
+      const mappedProducts = res.data.map((item: any) => ({
+        external_id: item.id || item.product_link,
+        name: item.title,
+        description: '',
+        price: item.extracted_price || 0,
+        currency: 'INR',
+        discount: item.extracted_old_price ? Math.round((1 - (item.extracted_price / item.extracted_old_price)) * 100) : 0,
+        rating: item.rating || 0,
+        stock: 100,
+        brand: '',
+        category: selectedCategory !== 'All' ? selectedCategory : 'Product',
+        image_url: item.thumbnail,
+        images: [item.thumbnail],
+        availability: true,
+        source: item.merchant || 'Unknown',
+        url: item.product_link
+      }));
+      
       if (reset) {
-        setProducts(res.data.products);
+        setProducts(mappedProducts);
       } else {
-        setProducts(prev => [...prev, ...res.data.products]);
+        setProducts(prev => [...prev, ...mappedProducts]);
       }
       
-      setHasMore(currentSkip + res.data.products.length < res.data.total);
+      // SerpApi doesn't easily support pagination the same way, we just disable infinite scroll for now
+      setHasMore(false);
     } catch (err) {
       console.error('Failed to fetch products', err);
+      // Let the user know if SerpApi fails
+      alert('Unable to fetch shopping results. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -78,7 +100,7 @@ export default function DiscoverProducts() {
   const handleLoadMore = () => {
     const nextSkip = skip + limit;
     setSkip(nextSkip);
-    fetchProducts(nextSkip);
+    fetchProducts(false);
   };
 
   const handleTrackProduct = async (product: any) => {
@@ -87,8 +109,13 @@ export default function DiscoverProducts() {
         url: product.url,
         target_price: null,
         check_interval: 3600,
-        source: product.source,
-        external_id: product.external_id
+        source: 'google_shopping',
+        external_id: product.external_id,
+        name: product.name,
+        image_url: product.image_url,
+        current_price: product.price,
+        currency: product.currency,
+        merchant: product.source
       });
       navigate(`/products/${res.data.id}`);
     } catch (err) {

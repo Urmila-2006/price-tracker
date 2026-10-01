@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     
     USD_TO_INR_RATE: float = 83.50
     DEMO_PRICE_SIMULATION: bool = True
+    SERPAPI_KEY: Optional[str] = None
     
     class Config:
         import os

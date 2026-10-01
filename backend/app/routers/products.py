@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List
 from datetime import datetime, timezone
@@ -19,6 +19,50 @@ router = APIRouter(
 def get_products(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     return db.query(Product).filter(Product.user_id == current_user.id).all()
 
+@router.get("/search")
+def search_products(q: str):
+    import requests
+    from ..config import settings
+    if not settings.SERPAPI_KEY:
+        raise HTTPException(status_code=500, detail="SERPAPI_KEY not configured")
+
+    params = {
+        "engine": "google_shopping",
+        "q": q,
+        "location": "India",
+        "api_key": settings.SERPAPI_KEY,
+    }
+    
+    try:
+        response = requests.get("https://serpapi.com/search.json", params=params)
+        response.raise_for_status()
+        data = response.json()
+        
+        results = []
+        for item in data.get("shopping_results", []):
+            results.append({
+                "id": item.get("product_id") or item.get("link") or item.get("title"),
+                "title": item.get("title"),
+                "price": item.get("price"),
+                "extracted_price": item.get("extracted_price"),
+                "source": "SerpApi",
+                "source_provider": "SerpApi",
+                "merchant": item.get("source"),
+                "product_link": item.get("product_link") or item.get("link"),
+                "thumbnail": item.get("thumbnail"),
+                "rating": item.get("rating"),
+                "reviews": item.get("reviews"),
+                "old_price": item.get("old_price"),
+                "extracted_old_price": item.get("extracted_old_price"),
+            })
+            
+        return results
+    except requests.exceptions.HTTPError as e:
+        error_msg = e.response.text if e.response else str(e)
+        raise HTTPException(status_code=e.response.status_code if e.response else 500, detail=f"SerpApi request failed: {error_msg}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch from SerpApi: {str(e)}")
+
 @router.post("/preview", response_model=ProductPreviewResponse)
 def preview_product(request: ProductPreviewRequest, current_user: User = Depends(get_current_user)):
     scraper = get_scraper(request.url)
@@ -31,10 +75,28 @@ def preview_product(request: ProductPreviewRequest, current_user: User = Depends
         raise HTTPException(status_code=500, detail="An unexpected error occurred while fetching the product preview.")
 
 @router.post("", response_model=ProductResponse)
-def add_product(product: ProductCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def add_product(product: ProductCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     from ..services.currency import convert_usd_to_inr
     
-    if product.source and product.source != "custom" and product.external_id:
+    if product.source == "google_shopping":
+        db_product = Product(
+            user_id=current_user.id,
+            url=product.url,
+            source=product.source,
+            external_id=product.external_id,
+            name=product.name or "Unknown Product",
+            image_url=product.image_url,
+            current_price=product.current_price or 0.0,
+            currency=product.currency or "INR",
+            source_price=product.current_price or 0.0,
+            source_currency=product.currency or "INR",
+            availability=True,
+            target_price=product.target_price,
+            check_interval=product.check_interval,
+            website=product.merchant or "Google Shopping",
+            last_checked_at=datetime.now(timezone.utc)
+        )
+    elif product.source and product.source != "custom" and product.external_id:
         from ..providers import get_provider
         provider = get_provider(product.source)
         try:
@@ -127,6 +189,10 @@ def add_product(product: ProductCreate, db: Session = Depends(get_db), current_u
     db.add(initial_history)
     db.commit()
     
+    if db_product.target_price is not None and db_product.current_price is not None and db_product.current_price <= db_product.target_price:
+        from ..tasks.scraper_tasks import check_product_price
+        background_tasks.add_task(check_product_price, db_product.id, False)
+    
     return db_product
 
 @router.get("/{product_id}", response_model=ProductWithHistoryResponse)
@@ -137,14 +203,18 @@ def get_product(product_id: int, db: Session = Depends(get_db), current_user: Us
     return product
 
 @router.put("/{product_id}", response_model=ProductResponse)
-def update_product(product_id: int, product_update: ProductUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def update_product(product_id: int, product_update: ProductUpdate, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     db_product = db.query(Product).filter(Product.id == product_id, Product.user_id == current_user.id).first()
     if not db_product:
         raise HTTPException(status_code=404, detail="Product not found")
         
+    trigger_check = False
+        
     if product_update.target_price is not None:
         if db_product.target_price != product_update.target_price:
             db_product.target_price_notified = False
+            if db_product.current_price is not None and db_product.current_price <= product_update.target_price:
+                trigger_check = True
         db_product.target_price = product_update.target_price
     if product_update.check_interval is not None:
         db_product.check_interval = product_update.check_interval
@@ -153,17 +223,26 @@ def update_product(product_id: int, product_update: ProductUpdate, db: Session =
         
     db.commit()
     db.refresh(db_product)
+    
+    if trigger_check:
+        from ..tasks.scraper_tasks import check_product_price
+        background_tasks.add_task(check_product_price, db_product.id, False)
+        
     return db_product
 
 @router.put("/{product_id}/alert-settings", response_model=ProductResponse)
-def update_alert_settings(product_id: int, settings_update: ProductAlertSettingsUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def update_alert_settings(product_id: int, settings_update: ProductAlertSettingsUpdate, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     db_product = db.query(Product).filter(Product.id == product_id, Product.user_id == current_user.id).first()
     if not db_product:
         raise HTTPException(status_code=404, detail="Product not found")
         
+    trigger_check = False
+        
     if settings_update.target_price is not None:
         if db_product.target_price != settings_update.target_price:
             db_product.target_price_notified = False
+            if db_product.current_price is not None and db_product.current_price <= settings_update.target_price:
+                trigger_check = True
         db_product.target_price = settings_update.target_price
     if settings_update.check_interval is not None:
         db_product.check_interval = settings_update.check_interval
@@ -174,6 +253,11 @@ def update_alert_settings(product_id: int, settings_update: ProductAlertSettings
         
     db.commit()
     db.refresh(db_product)
+    
+    if trigger_check:
+        from ..tasks.scraper_tasks import check_product_price
+        background_tasks.add_task(check_product_price, db_product.id, False)
+        
     return db_product
 
 @router.delete("/{product_id}")

@@ -9,6 +9,11 @@ class ProductBase(BaseModel):
     check_interval: Optional[int] = 3600
     source: Optional[str] = "custom"
     external_id: Optional[str] = None
+    name: Optional[str] = None
+    image_url: Optional[str] = None
+    current_price: Optional[float] = None
+    currency: Optional[str] = "INR"
+    merchant: Optional[str] = None
 
 class ProductCreate(ProductBase):
     pass
