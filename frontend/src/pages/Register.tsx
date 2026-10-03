@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import api from '../services/api';
-import { getApiErrorMessage } from '../utils/errorHandler';
+
+import { supabase } from '../lib/supabase';
 import PasswordInput from '../components/PasswordInput';
 import { Activity, ShieldCheck } from 'lucide-react';
 
@@ -54,13 +54,24 @@ export default function Register() {
 
     setLoading(true);
     try {
-      await api.post('/auth/register', { name, email, password });
+      const { error: authError } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            full_name: name
+          }
+        }
+      });
+      
+      if (authError) throw authError;
+      
       setSuccess(true);
       setTimeout(() => {
         navigate('/login');
       }, 2000);
     } catch (err: any) {
-      setError(getApiErrorMessage(err) || 'An unexpected error occurred during registration.');
+      setError(err.message || 'An unexpected error occurred during registration.');
     } finally {
       setLoading(false);
     }

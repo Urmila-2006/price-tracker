@@ -1,0 +1,1 @@
+-- 001_initial_schema.sql (Obsolete, replaced by 20231003_init_schema.sql)

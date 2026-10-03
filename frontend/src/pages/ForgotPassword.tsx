@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import api from '../services/api';
-import { getApiErrorMessage } from '../utils/errorHandler';
+
+import { supabase } from '../lib/supabase';
 import { Activity, Mail, CheckCircle } from 'lucide-react';
 
 export default function ForgotPassword() {
@@ -16,10 +16,13 @@ export default function ForgotPassword() {
     setError('');
     
     try {
-      await api.post('/auth/forgot-password', { email });
+      const { error: authError } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/reset-password`,
+      });
+      if (authError) throw authError;
       setSuccess(true);
     } catch (err: any) {
-      setError(getApiErrorMessage(err) || 'Failed to process request');
+      setError(err.message || 'Failed to process request');
     } finally {
       setLoading(false);
     }

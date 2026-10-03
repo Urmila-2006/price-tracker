@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
 import { LayoutDashboard, Package, PlusCircle, Bell, LogOut, Activity, User as UserIcon } from 'lucide-react';
-import api from '../services/api';
+import { supabase } from '../lib/supabase';
 
 export default function Layout() {
   const navigate = useNavigate();
@@ -10,20 +10,37 @@ export default function Layout() {
   const [productCount, setProductCount] = useState<number | null>(null);
 
   useEffect(() => {
-    api.get('/auth/me')
-      .then(res => setUser(res.data))
-      .catch(() => {
-        localStorage.removeItem('token');
+    async function loadData() {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
         navigate('/login');
-      });
+        return;
+      }
       
-    // Fetch product count for the badge
-    api.get('/products')
-      .then(res => setProductCount(res.data.length))
-      .catch(console.error);
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .single();
+        
+      if (profile) {
+        setUser({ name: profile.full_name, email: profile.email });
+      } else {
+        setUser({ name: user.user_metadata?.full_name || 'User', email: user.email });
+      }
+
+      // Fetch product count for the badge
+      const { count } = await supabase
+        .from('products')
+        .select('*', { count: 'exact', head: true });
+        
+      setProductCount(count);
+    }
+    loadData();
   }, [navigate]);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
     localStorage.removeItem('token');
     navigate('/login');
   };

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import api from '../services/api';
+import { supabase } from '../lib/supabase';
 import { Bell, Check, TrendingDown, Target, Activity } from 'lucide-react';
 
 export default function Alerts() {
@@ -10,19 +10,33 @@ export default function Alerts() {
     fetchAlerts();
   }, []);
 
-  const fetchAlerts = () => {
-    api.get('/alerts')
-      .then(res => {
-        setAlerts(res.data);
-        setLoading(false);
-      })
-      .catch(err => console.error(err));
+  const fetchAlerts = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      
+      const { data, error } = await supabase
+        .from('notifications')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
+        
+      if (error) throw error;
+      setAlerts(data || []);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const markAsRead = async (id: number) => {
+  const markAsRead = async (id: string) => {
     try {
-      await api.put(`/alerts/${id}/read`);
-      setAlerts(alerts.map(a => a.id === id ? { ...a, status: 'READ' } : a));
+      // In the new schema, notifications might not have a 'status' field.
+      // But we can delete it or add a read flag if we altered schema.
+      // Since it's not in the requested schema, let's just delete the notification.
+      await supabase.from('notifications').delete().eq('id', id);
+      setAlerts(alerts.filter(a => a.id !== id));
     } catch (err) {
       console.error(err);
     }
@@ -36,7 +50,7 @@ export default function Alerts() {
     );
   }
 
-  const unreadCount = alerts.filter(a => a.status === 'UNREAD').length;
+  const unreadCount = alerts.length;
 
   return (
     <div className="max-w-5xl mx-auto">
@@ -67,7 +81,7 @@ export default function Alerts() {
             {alerts.map(alert => (
               <div 
                 key={alert.id} 
-                className={`flex items-start justify-between p-6 transition-colors ${alert.status === 'UNREAD' ? 'bg-indigo-50/50' : 'hover:bg-gray-50'}`}
+                className="flex items-start justify-between p-6 transition-colors bg-indigo-50/50 hover:bg-gray-50"
               >
                 <div className="flex items-start gap-4">
                   <div className={`mt-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${
@@ -89,31 +103,25 @@ export default function Alerts() {
                         {new Date(alert.sent_at).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                       </span>
                     </div>
-                    <p className={`text-base ${alert.status === 'UNREAD' ? 'font-semibold text-gray-900' : 'text-gray-700'} mb-2`}>
+                    <p className={`text-base font-semibold text-gray-900 mb-2`}>
                       {alert.message}
                     </p>
-                    {alert.email_status === 'sent' && (
+                    {alert.sent_at && (
                       <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-2 py-1 text-xs font-medium text-indigo-700">
                         <Check size={12} /> Email sent
                       </span>
                     )}
-                    {alert.email_status === 'failed' && (
-                      <span className="inline-flex items-center gap-1 rounded-md bg-red-50 px-2 py-1 text-xs font-medium text-red-700">
-                        Email failed to send
-                      </span>
-                    )}
+
                   </div>
                 </div>
                 
-                {alert.status === 'UNREAD' && (
-                  <button 
-                    onClick={() => markAsRead(alert.id)}
-                    className="flex items-center justify-center h-8 w-8 rounded-full bg-white border border-gray-200 text-indigo-600 shadow-sm hover:bg-indigo-50 hover:border-indigo-200 transition-colors tooltip"
-                    title="Mark as read"
-                  >
-                    <Check size={16} />
-                  </button>
-                )}
+                <button 
+                  onClick={() => markAsRead(alert.id)}
+                  className="flex items-center justify-center h-8 w-8 rounded-full bg-white border border-gray-200 text-indigo-600 shadow-sm hover:bg-indigo-50 hover:border-indigo-200 transition-colors tooltip"
+                  title="Dismiss alert"
+                >
+                  <Check size={16} />
+                </button>
               </div>
             ))}
           </div>

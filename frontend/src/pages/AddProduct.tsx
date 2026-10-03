@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import api from '../services/api';
-import { getApiErrorMessage } from '../utils/errorHandler';
+import { supabase } from '../lib/supabase';
 import { Search, Loader2, Link as LinkIcon, Image as ImageIcon, AlertCircle, Compass, Link2 } from 'lucide-react';
 import DiscoverProducts from '../components/DiscoverProducts';
 import { formatCurrency } from '../utils/currency';
@@ -37,10 +36,13 @@ export default function AddProduct() {
     setPreview(null);
     
     try {
-      const res = await api.post('/products/preview', { url });
-      setPreview(res.data);
+      const { data, error } = await supabase.functions.invoke('check-price', {
+        body: { url, preview_only: true }
+      });
+      if (error) throw error;
+      setPreview(data);
     } catch (err: any) {
-      setError(getApiErrorMessage(err) || 'Failed to analyze product URL');
+      setError(err.message || 'Failed to analyze product URL');
     } finally {
       setAnalyzing(false);
     }
@@ -50,15 +52,34 @@ export default function AddProduct() {
     setSubmitting(true);
     setError('');
     try {
-      const res = await api.post('/products', {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not logged in');
+
+      const { data, error } = await supabase.from('products').insert({
+        user_id: user.id,
         url,
         target_price: targetPrice ? parseFloat(targetPrice) : null,
-        check_interval: parseInt(checkInterval),
-        source: 'custom'
-      });
-      navigate(`/products/${res.data.id}`);
+        check_interval_minutes: parseInt(checkInterval) / 60, // convert seconds to minutes
+        source: preview?.source || 'custom',
+        name: preview?.name || url,
+        image_url: preview?.image_url,
+        current_price: preview?.price,
+        previous_price: preview?.price,
+        last_checked_at: new Date().toISOString()
+      }).select().single();
+      
+      if (error) throw error;
+
+      if (preview?.price) {
+        await supabase.from('price_history').insert({
+          product_id: data.id,
+          price: preview.price
+        });
+      }
+
+      navigate(`/products/${data.id}`);
     } catch (err: any) {
-      setError(getApiErrorMessage(err) || 'Failed to add product');
+      setError(err.message || 'Failed to add product');
     } finally {
       setSubmitting(false);
     }

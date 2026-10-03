@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import api from '../services/api';
+import { supabase } from '../lib/supabase';
 import ProductCard from './ProductCard';
 import { Search, Smartphone, Laptop, Watch, Shirt, Sparkles, Sofa, ShoppingBag, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -37,30 +37,27 @@ export default function DiscoverProducts() {
     fetchProducts(true);
   }, [selectedCategory, searchQuery]);
 
-  const fetchCategories = async () => {
-    try {
-      const res = await api.get('/catalog/categories');
-      setCategories(['All', ...res.data]);
-    } catch (err) {
-      console.error('Failed to fetch categories', err);
-    }
+  const fetchCategories = () => {
+    setCategories(['All', 'smartphones', 'laptops', 'watches', 'clothing', 'furniture', 'beauty']);
   };
 
   const fetchProducts = async (reset: boolean = false) => {
     setLoading(true);
     try {
-      let endpoint = '/products/search';
-      let params: any = {};
-      
+      let q = 'trending products';
       if (searchQuery) {
-        params.q = searchQuery;
+        q = searchQuery;
       } else if (selectedCategory !== 'All') {
-        params.q = selectedCategory;
-      } else {
-        params.q = 'trending products';
+        q = selectedCategory;
       }
 
-      const res = await api.get(endpoint, { params });
+      const { data, error } = await supabase.functions.invoke('search-products', {
+        body: { q }
+      });
+      
+      if (error) throw error;
+      
+      const res = data;
       
       const mappedProducts = res.data.map((item: any) => ({
         external_id: item.id || item.product_link,
@@ -105,19 +102,34 @@ export default function DiscoverProducts() {
 
   const handleTrackProduct = async (product: any) => {
     try {
-      const res = await api.post('/products', {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        alert('You must be logged in to track products');
+        return;
+      }
+
+      const { data, error } = await supabase.from('products').insert({
+        user_id: user.id,
         url: product.url,
         target_price: null,
-        check_interval: 3600,
-        source: 'google_shopping',
-        external_id: product.external_id,
+        check_interval_minutes: 60,
+        source: product.source,
         name: product.name,
         image_url: product.image_url,
         current_price: product.price,
-        currency: product.currency,
-        merchant: product.source
+        previous_price: product.price,
+        last_checked_at: new Date().toISOString(),
+      }).select().single();
+
+      if (error) throw error;
+      
+      // Create first price history
+      await supabase.from('price_history').insert({
+        product_id: data.id,
+        price: product.price
       });
-      navigate(`/products/${res.data.id}`);
+      
+      navigate(`/products/${data.id}`);
     } catch (err) {
       console.error('Failed to track product', err);
       alert('Failed to track product');

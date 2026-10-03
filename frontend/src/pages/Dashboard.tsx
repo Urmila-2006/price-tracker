@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import api from '../services/api';
+import { supabase } from '../lib/supabase';
 import { Package, TrendingDown, Bell, ArrowRight, Activity, Plus, Flame, Sparkles, Check } from 'lucide-react';
 import PriceDisplay from '../components/PriceDisplay';
 import { formatCurrency } from '../utils/currency';
@@ -10,12 +10,40 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    api.get('/dashboard/stats')
-      .then(res => {
-        setStats(res.data);
+    async function fetchDashboardData() {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return;
+
+        const [
+          { count: totalProducts },
+          { count: priceDrops },
+          { count: targetAlerts },
+          { data: recentProducts },
+          { data: recentAlerts }
+        ] = await Promise.all([
+          supabase.from('products').select('*', { count: 'exact', head: true }),
+          supabase.from('products').select('*', { count: 'exact', head: true }).lt('current_price', 'previous_price'),
+          supabase.from('price_alerts').select('*', { count: 'exact', head: true }).eq('enabled', true), // approximation for alerts
+          supabase.from('products').select('*').order('created_at', { ascending: false }).limit(10),
+          supabase.from('notifications').select('*').order('created_at', { ascending: false }).limit(5)
+        ]);
+
+        setStats({
+          total_products: totalProducts || 0,
+          price_drops: priceDrops || 0,
+          target_alerts: targetAlerts || 0,
+          recent_products: recentProducts || [],
+          recent_alerts: recentAlerts || []
+        });
+      } catch (err) {
+        console.error(err);
+      } finally {
         setLoading(false);
-      })
-      .catch(err => console.error(err));
+      }
+    }
+
+    fetchDashboardData();
   }, []);
 
   if (loading) {

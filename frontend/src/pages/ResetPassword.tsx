@@ -1,13 +1,13 @@
 import { useState } from 'react';
-import { useNavigate, useSearchParams, Link } from 'react-router-dom';
-import api from '../services/api';
-import { getApiErrorMessage } from '../utils/errorHandler';
+import { useNavigate, Link } from 'react-router-dom';
+
+import { supabase } from '../lib/supabase';
 import PasswordInput from '../components/PasswordInput';
-import { Activity, ShieldCheck, AlertCircle } from 'lucide-react';
+import { Activity, ShieldCheck } from 'lucide-react';
 
 export default function ResetPassword() {
-  const [searchParams] = useSearchParams();
-  const token = searchParams.get('token');
+  // Supabase sends access_token in the URL hash, but we don't necessarily need to parse it if we use the auth state change listener, or we can just update password directly if session is established.
+  // If not, we just update user.
   
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -21,11 +21,6 @@ export default function ResetPassword() {
     e.preventDefault();
     setError('');
     
-    if (!token) {
-      setError('Invalid or missing reset token.');
-      return;
-    }
-    
     if (password.length < 8) {
       setError('Password must contain at least 8 characters.');
       return;
@@ -38,30 +33,21 @@ export default function ResetPassword() {
 
     setLoading(true);
     try {
-      await api.post('/auth/reset-password', { token, password });
+      const { error: authError } = await supabase.auth.updateUser({
+        password: password
+      });
+      if (authError) throw authError;
+      
       setSuccess(true);
       setTimeout(() => navigate('/login'), 3000);
     } catch (err: any) {
-      setError(getApiErrorMessage(err) || 'Failed to reset password');
+      setError(err.message || 'Failed to reset password');
     } finally {
       setLoading(false);
     }
   };
 
-  if (!token) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-gray-50 p-4">
-        <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-xl text-center">
-          <AlertCircle className="mx-auto h-12 w-12 text-red-500 mb-4" />
-          <h2 className="text-2xl font-bold text-gray-900 mb-2">Invalid Link</h2>
-          <p className="text-gray-600 mb-6">This password reset link is missing or invalid.</p>
-          <Link to="/forgot-password" className="inline-flex justify-center rounded-lg bg-indigo-600 px-4 py-2 font-medium text-white hover:bg-indigo-700">
-            Request new link
-          </Link>
-        </div>
-      </div>
-    );
-  }
+
 
   return (
     <div className="flex min-h-screen flex-col md:flex-row-reverse">

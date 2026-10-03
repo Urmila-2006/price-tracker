@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import api from '../services/api';
-import { getApiErrorMessage } from '../utils/errorHandler';
+
+import { supabase } from '../lib/supabase';
 import PasswordInput from '../components/PasswordInput';
 import { Activity, TrendingDown } from 'lucide-react';
 
@@ -17,11 +17,20 @@ export default function Login() {
     setLoading(true);
     setError('');
     try {
-      const res = await api.post('/auth/login', { email, password });
-      localStorage.setItem('token', res.data.access_token);
+      const { data, error: authError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+      if (authError) throw authError;
+      
+      // Keep localStorage token for backwards compatibility if needed, 
+      // though Supabase manages its own session.
+      if (data.session) {
+        localStorage.setItem('token', data.session.access_token);
+      }
       navigate('/');
     } catch (err: any) {
-      setError(getApiErrorMessage(err) || 'Login failed');
+      setError(err.message || 'Login failed');
     } finally {
       setLoading(false);
     }

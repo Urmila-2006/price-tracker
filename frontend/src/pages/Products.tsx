@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import api from '../services/api';
+import { supabase } from '../lib/supabase';
 import { Package, TrendingDown, ArrowRight, Activity, Plus, Heart, Star } from 'lucide-react';
 import { formatRelativeTime } from '../utils/date';
 import PriceDisplay from '../components/PriceDisplay';
@@ -13,13 +13,20 @@ export default function Products() {
     fetchProducts();
   }, []);
 
-  const fetchProducts = () => {
-    api.get('/products')
-      .then(res => {
-        setProducts(res.data);
-        setLoading(false);
-      })
-      .catch(err => console.error(err));
+  const fetchProducts = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('products')
+        .select('*')
+        .order('created_at', { ascending: false });
+        
+      if (error) throw error;
+      setProducts(data || []);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
   };
 
   if (loading) {
